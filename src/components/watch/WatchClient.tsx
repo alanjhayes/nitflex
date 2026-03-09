@@ -18,7 +18,7 @@ interface WatchClientProps {
   totalSeasons: number;
 }
 
-const AUTOPLAY_COUNTDOWN = 10;
+const AUTOPLAY_COUNTDOWN = 60;
 
 interface AutoPlay {
   nextSeason: number;

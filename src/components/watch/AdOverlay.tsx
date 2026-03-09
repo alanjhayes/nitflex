@@ -26,6 +26,7 @@ export function AdOverlay({
 }: AdOverlayProps) {
   const [secondsLeft, setSecondsLeft] = useState(skipAfter);
   const [canSkip, setCanSkip] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // Skip countdown
@@ -38,11 +39,17 @@ export function AdOverlay({
     return () => clearTimeout(t);
   }, [secondsLeft]);
 
-  // Auto-complete after duration
+  // Auto-complete after duration + tick elapsed for progress bar
   useEffect(() => {
     const t = setTimeout(onComplete, duration * 1000);
     return () => clearTimeout(t);
   }, [duration, onComplete]);
+
+  useEffect(() => {
+    if (elapsed >= duration) return;
+    const t = setTimeout(() => setElapsed((e) => e + 1), 1000);
+    return () => clearTimeout(t);
+  }, [elapsed, duration]);
 
   // Auto-play ad video if provided
   useEffect(() => {
@@ -93,6 +100,14 @@ export function AdOverlay({
             onClick={(e) => e.stopPropagation()}
           />
         )}
+      </div>
+
+      {/* Ad duration progress bar */}
+      <div className="h-1 bg-white/10">
+        <div
+          className="h-full bg-yellow-400 transition-none"
+          style={{ width: `${Math.min((elapsed / duration) * 100, 100)}%` }}
+        />
       </div>
 
       {/* Bottom bar */}
