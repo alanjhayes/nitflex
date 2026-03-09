@@ -10,7 +10,9 @@ export async function GET(req: Request) {
 
   try {
     const data = await getTVSeason(id, season);
-    return NextResponse.json(data);
+    return NextResponse.json(data, {
+      headers: { "Cache-Control": "public, max-age=3600, stale-while-revalidate=3600" },
+    });
   } catch {
     return NextResponse.json({ error: "Failed" }, { status: 500 });
   }

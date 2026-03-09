@@ -7,7 +7,9 @@ export async function GET(req: Request) {
 
   try {
     const data = await searchMulti(q);
-    return NextResponse.json(data);
+    return NextResponse.json(data, {
+      headers: { "Cache-Control": "public, max-age=300, stale-while-revalidate=300" },
+    });
   } catch {
     return NextResponse.json({ error: "Failed" }, { status: 500 });
   }

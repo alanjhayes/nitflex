@@ -2,19 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { Search } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useDebounce } from "@/hooks/useDebounce";
 import { MovieCard } from "@/components/home/MovieCard";
 import type { TMDBSearchResult } from "@/types/tmdb";
 
-interface SearchPageClientProps {
-  initialQuery: string;
-  initialResults: TMDBSearchResult[];
-}
-
-export function SearchPageClient({ initialQuery, initialResults }: SearchPageClientProps) {
-  const [query, setQuery] = useState(initialQuery);
-  const [results, setResults] = useState<TMDBSearchResult[]>(initialResults);
+export function SearchPageClient() {
+  const searchParams = useSearchParams();
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const [results, setResults] = useState<TMDBSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const debouncedQuery = useDebounce(query, 400);
   const router = useRouter();

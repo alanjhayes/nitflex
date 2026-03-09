@@ -151,7 +151,7 @@ export async function GET(req: Request) {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
         "X-Frame-Options": "SAMEORIGIN",
-        "Cache-Control": "no-store",
+        "Cache-Control": "public, max-age=3600, stale-while-revalidate=3600",
       },
     });
   } catch (err) {
