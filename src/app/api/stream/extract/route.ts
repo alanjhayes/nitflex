@@ -32,19 +32,66 @@ function cacheKey(id: number, type: string, season: number | null, episode: numb
   return `${id}:${type}:${season ?? -1}:${episode ?? -1}`;
 }
 
-function buildVidlinkUrl(id: number, type: "movie" | "tv", season?: number, episode?: number) {
-  if (type === "movie") {
-    return `https://vidlink.pro/movie/${id}?primaryColor=E50914&title=false&poster=false`;
-  }
-  return `https://vidlink.pro/tv/${id}/${season ?? 1}/${episode ?? 1}?primaryColor=E50914&title=false&poster=false`;
+// ---------------------------------------------------------------------------
+// Provider definitions — tried in order until one yields an m3u8 URL
+// ---------------------------------------------------------------------------
+interface Provider {
+  name: string;
+  buildUrl: (id: number, type: "movie" | "tv", season?: number, episode?: number) => string;
+  defaultReferer: string;
+  timeoutMs: number;
 }
 
-async function extractViaPlaywright(id: number, type: "movie" | "tv", season?: number, episode?: number) {
-  const embedUrl = buildVidlinkUrl(id, type, season, episode);
+const PROVIDERS: Provider[] = [
+  {
+    name: "vidlink",
+    buildUrl: (id, type, season, episode) =>
+      type === "movie"
+        ? `https://vidlink.pro/movie/${id}?primaryColor=E50914&title=false&poster=false`
+        : `https://vidlink.pro/tv/${id}/${season ?? 1}/${episode ?? 1}?primaryColor=E50914&title=false&poster=false`,
+    defaultReferer: "https://vidlink.pro/",
+    timeoutMs: 20000,
+  },
+  {
+    name: "vidsrc",
+    buildUrl: (id, type, season, episode) =>
+      type === "movie"
+        ? `https://vidsrc.to/embed/movie/${id}`
+        : `https://vidsrc.to/embed/tv/${id}/${season ?? 1}/${episode ?? 1}`,
+    defaultReferer: "https://vidsrc.to/",
+    timeoutMs: 20000,
+  },
+  {
+    name: "embed.su",
+    buildUrl: (id, type, season, episode) =>
+      type === "movie"
+        ? `https://embed.su/embed/movie/${id}`
+        : `https://embed.su/embed/tv/${id}/${season ?? 1}/${episode ?? 1}`,
+    defaultReferer: "https://embed.su/",
+    timeoutMs: 20000,
+  },
+  {
+    name: "2embed",
+    buildUrl: (id, type, season, episode) =>
+      type === "movie"
+        ? `https://www.2embed.cc/embed/${id}`
+        : `https://www.2embed.cc/embedtv/${id}&s=${season ?? 1}&e=${episode ?? 1}`,
+    defaultReferer: "https://www.2embed.cc/",
+    timeoutMs: 20000,
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Playwright extraction — provider-agnostic
+// ---------------------------------------------------------------------------
+async function extractFromProvider(
+  embedUrl: string,
+  defaultReferer: string,
+  timeoutMs: number,
+): Promise<{ m3u8Url: string; referer: string } | null> {
   const browser = await getBrowser();
   const page = await browser.newPage();
   try {
-    // Block resources that don't affect stream resolution
     await page.route("**/*.{png,jpg,jpeg,gif,svg,webp,ico,woff,woff2,ttf,eot,css}", (route) =>
       route.abort()
     );
@@ -56,7 +103,7 @@ async function extractViaPlaywright(id: number, type: "movie" | "tv", season?: n
         if (resolved) return;
         if (req.url().includes(".m3u8")) {
           resolved = true;
-          const referer = req.headers()["referer"] ?? "https://vidlink.pro/";
+          const referer = req.headers()["referer"] ?? defaultReferer;
           resolve({ m3u8Url: req.url(), referer });
         }
       });
@@ -71,77 +118,108 @@ async function extractViaPlaywright(id: number, type: "movie" | "tv", season?: n
           const match = text.match(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/);
           if (match) {
             resolved = true;
-            const referer = res.request().headers()["referer"] ?? "https://vidlink.pro/";
+            const referer = res.request().headers()["referer"] ?? defaultReferer;
             resolve({ m3u8Url: match[0], referer });
           }
         } catch { /* binary or unreadable response */ }
       });
     });
 
-    // Start navigation — don't await networkidle, resolve as soon as URL is found
-    page.goto(embedUrl, { timeout: 30000 }).catch(() => {});
+    page.goto(embedUrl, { timeout: timeoutMs }).catch(() => {});
 
-    const result = await Promise.race([
+    return await Promise.race([
       found,
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 30000)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
     ]);
-
-    return result;
   } finally {
     await page.close().catch(() => {});
   }
 }
 
+async function extractWithFallbacks(
+  id: number,
+  type: "movie" | "tv",
+  season?: number,
+  episode?: number,
+): Promise<{ m3u8Url: string; referer: string } | null> {
+  for (const provider of PROVIDERS) {
+    const embedUrl = provider.buildUrl(id, type, season, episode);
+    console.log(`[stream] trying provider: ${provider.name} — ${embedUrl}`);
+    try {
+      const result = await extractFromProvider(embedUrl, provider.defaultReferer, provider.timeoutMs);
+      if (result) {
+        console.log(`[stream] success via ${provider.name}`);
+        return result;
+      }
+      console.log(`[stream] ${provider.name} returned no m3u8, trying next provider`);
+    } catch (err) {
+      console.warn(`[stream] ${provider.name} threw:`, err);
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Route handler
+// ---------------------------------------------------------------------------
 export async function GET(req: Request) {
   try {
-  const { searchParams } = new URL(req.url);
-  const id = Number(searchParams.get("id"));
-  const type = (searchParams.get("type") ?? "movie") as "movie" | "tv";
-  const season = searchParams.get("season") ? Number(searchParams.get("season")) : null;
-  const episode = searchParams.get("episode") ? Number(searchParams.get("episode")) : null;
+    const { searchParams } = new URL(req.url);
+    const id = Number(searchParams.get("id"));
+    const type = (searchParams.get("type") ?? "movie") as "movie" | "tv";
+    const season = searchParams.get("season") ? Number(searchParams.get("season")) : null;
+    const episode = searchParams.get("episode") ? Number(searchParams.get("episode")) : null;
 
-  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const key = cacheKey(id, type, season, episode);
+    const key = cacheKey(id, type, season, episode);
 
-  // 1. Check in-memory cache (same server session only)
-  const memoryCached = memoryCache.get(key);
-  if (memoryCached) {
-    const token = signStreamToken(memoryCached.m3u8Url, memoryCached.referer);
-    const proxyUrl = `/api/stream/proxy?token=${token}`;
-    return NextResponse.json({ proxyUrl, cached: true });
-  }
+    // 1. Check in-memory cache (same server session only)
+    const memoryCached = memoryCache.get(key);
+    if (memoryCached) {
+      const token = signStreamToken(memoryCached.m3u8Url, memoryCached.referer);
+      const proxyUrl = `/api/stream/proxy?token=${token}`;
+      return NextResponse.json({ proxyUrl, cached: true });
+    }
 
-  // 2. Extract via Playwright (DB is write-only for record keeping)
-  const result = await extractViaPlaywright(id, type, season ?? undefined, episode ?? undefined);
-  if (!result) {
-    return NextResponse.json({ error: "Stream not found" }, { status: 404 });
-  }
+    // 2. Try providers in order until one yields an m3u8
+    const result = await extractWithFallbacks(
+      id,
+      type,
+      season ?? undefined,
+      episode ?? undefined,
+    );
 
-  // 3. Save to cache
-  await prisma.streamCache.upsert({
-    where: {
-      tmdbId_mediaType_season_episode: {
+    if (!result) {
+      return NextResponse.json({ error: "Stream not available" }, { status: 404 });
+    }
+
+    // 3. Cache the result
+    memoryCache.set(key, result);
+
+    await prisma.streamCache.upsert({
+      where: {
+        tmdbId_mediaType_season_episode: {
+          tmdbId: id,
+          mediaType: type,
+          season: season ?? -1,
+          episode: episode ?? -1,
+        },
+      },
+      update: { m3u8Url: result.m3u8Url, referer: result.referer, cachedAt: new Date() },
+      create: {
         tmdbId: id,
         mediaType: type,
         season: season ?? -1,
         episode: episode ?? -1,
+        m3u8Url: result.m3u8Url,
+        referer: result.referer,
       },
-    },
-    update: { m3u8Url: result.m3u8Url, referer: result.referer, cachedAt: new Date() },
-    create: {
-      tmdbId: id,
-      mediaType: type,
-      season: season ?? -1,
-      episode: episode ?? -1,
-      m3u8Url: result.m3u8Url,
-      referer: result.referer,
-    },
-  });
+    });
 
-  const token = signStreamToken(result.m3u8Url, result.referer);
-  const proxyUrl = `/api/stream/proxy?token=${token}`;
-  return NextResponse.json({ proxyUrl, referer: result.referer, cached: false });
+    const token = signStreamToken(result.m3u8Url, result.referer);
+    const proxyUrl = `/api/stream/proxy?token=${token}`;
+    return NextResponse.json({ proxyUrl, referer: result.referer, cached: false });
   } catch (err) {
     console.error("Stream extract error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
