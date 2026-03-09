@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ChevronDown } from "lucide-react";
+import { ArrowLeft, ChevronDown, SkipForward } from "lucide-react";
 import type { TMDBDetails } from "@/types/tmdb";
 import type { TVSeason } from "@/lib/tmdb";
 import { tmdbImage } from "@/lib/tmdb";
@@ -16,6 +16,14 @@ interface WatchClientProps {
   episode?: number;
   seasonData: TVSeason | null;
   totalSeasons: number;
+}
+
+const AUTOPLAY_COUNTDOWN = 10;
+
+interface AutoPlay {
+  nextSeason: number;
+  nextEpisode: number;
+  secondsLeft: number;
 }
 
 export function WatchClient({
@@ -43,8 +51,21 @@ export function WatchClient({
   });
   const [loadingSeason, setLoadingSeason] = useState(false);
   const [showEpisodes, setShowEpisodes] = useState(false);
+  const [autoPlay, setAutoPlay] = useState<AutoPlay | null>(null);
 
   const title = details.title ?? details.name ?? "Unknown";
+
+  const fetchSeason = useCallback(async (s: number): Promise<TVSeason | null> => {
+    if (loadedSeasons[s]) return loadedSeasons[s];
+    try {
+      const res = await fetch(`/api/tmdb/season?id=${details.id}&season=${s}`);
+      const data: TVSeason = await res.json();
+      setLoadedSeasons((prev) => ({ ...prev, [s]: data }));
+      return data;
+    } catch {
+      return null;
+    }
+  }, [details.id, loadedSeasons]);
 
   const loadSeason = useCallback(async (s: number) => {
     if (loadedSeasons[s]) {
@@ -54,25 +75,86 @@ export function WatchClient({
     }
     setLoadingSeason(true);
     try {
-      const res = await fetch(`/api/tmdb/season?id=${details.id}&season=${s}`);
-      const data: TVSeason = await res.json();
-      setLoadedSeasons((prev) => ({ ...prev, [s]: data }));
-      setCurrentSeason(s);
-      setCurrentEpisode(1);
+      const data = await fetchSeason(s);
+      if (data) {
+        setCurrentSeason(s);
+        setCurrentEpisode(1);
+      }
     } finally {
       setLoadingSeason(false);
     }
-  }, [details.id, loadedSeasons]);
+  }, [fetchSeason, loadedSeasons]);
 
   const selectEpisode = (ep: number) => {
+    setAutoPlay(null);
     setCurrentEpisode(ep);
     setShowEpisodes(false);
   };
+
+  // Called when the video finishes playing
+  const handleEpisodeEnded = useCallback(async () => {
+    if (mediaType !== "tv") return;
+
+    const sData = loadedSeasons[currentSeason];
+    if (!sData) return;
+
+    const episodes = sData.episodes;
+    const lastEpNum = episodes[episodes.length - 1]?.episode_number ?? currentEpisode;
+
+    let nextSeason = currentSeason;
+    let nextEpisode = currentEpisode + 1;
+
+    if (nextEpisode > lastEpNum) {
+      if (currentSeason < totalSeasons) {
+        nextSeason = currentSeason + 1;
+        nextEpisode = 1;
+        // Pre-fetch next season data so we can show the episode name in the overlay
+        fetchSeason(nextSeason);
+      } else {
+        // End of series — nothing to auto-play
+        return;
+      }
+    }
+
+    setAutoPlay({ nextSeason, nextEpisode, secondsLeft: AUTOPLAY_COUNTDOWN });
+  }, [mediaType, currentSeason, currentEpisode, loadedSeasons, totalSeasons, fetchSeason]);
+
+  // Tick the countdown
+  useEffect(() => {
+    if (!autoPlay) return;
+    if (autoPlay.secondsLeft <= 0) {
+      const { nextSeason, nextEpisode } = autoPlay;
+      setAutoPlay(null);
+      setCurrentSeason(nextSeason);
+      setCurrentEpisode(nextEpisode);
+      return;
+    }
+    const t = setTimeout(
+      () => setAutoPlay((p) => p ? { ...p, secondsLeft: p.secondsLeft - 1 } : null),
+      1000
+    );
+    return () => clearTimeout(t);
+  }, [autoPlay]);
+
+  const playNow = useCallback(() => {
+    if (!autoPlay) return;
+    const { nextSeason, nextEpisode } = autoPlay;
+    setAutoPlay(null);
+    setCurrentSeason(nextSeason);
+    setCurrentEpisode(nextEpisode);
+  }, [autoPlay]);
 
   const currentSeasonData = loadedSeasons[currentSeason];
   const currentEpisodeData = currentSeasonData?.episodes.find(
     (e) => e.episode_number === currentEpisode
   );
+
+  // Info for the auto-play overlay
+  const nextEpisodeData = autoPlay
+    ? loadedSeasons[autoPlay.nextSeason]?.episodes.find(
+        (e) => e.episode_number === autoPlay.nextEpisode
+      )
+    : null;
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] flex flex-col">
@@ -103,7 +185,49 @@ export function WatchClient({
           mediaType={mediaType}
           season={currentSeason}
           episode={currentEpisode}
+          onEnded={handleEpisodeEnded}
         />
+
+        {/* Auto-play next episode overlay */}
+        {autoPlay && (
+          <div className="absolute bottom-16 right-4 sm:right-8 z-30 w-64 sm:w-72 bg-black/90 border border-white/10 rounded-lg overflow-hidden shadow-2xl">
+            {/* Progress bar */}
+            <div className="h-1 bg-white/20">
+              <div
+                className="h-full bg-[#e50914] transition-none"
+                style={{ width: `${((AUTOPLAY_COUNTDOWN - autoPlay.secondsLeft) / AUTOPLAY_COUNTDOWN) * 100}%` }}
+              />
+            </div>
+            <div className="p-4">
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Up Next</p>
+              <p className="text-sm font-semibold leading-snug mb-0.5">
+                S{autoPlay.nextSeason} E{autoPlay.nextEpisode}
+                {nextEpisodeData ? ` — ${nextEpisodeData.name}` : ""}
+              </p>
+              {nextEpisodeData?.runtime && (
+                <p className="text-xs text-gray-500 mb-3">{nextEpisodeData.runtime}m</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={playNow}
+                  className="flex-1 flex items-center justify-center gap-1.5 bg-white text-black text-sm font-semibold py-2 rounded hover:bg-gray-200 transition"
+                >
+                  <SkipForward className="w-3.5 h-3.5" />
+                  Play Now
+                </button>
+                <button
+                  onClick={() => setAutoPlay(null)}
+                  className="px-3 py-2 text-sm text-gray-400 hover:text-white border border-white/20 rounded transition"
+                >
+                  Cancel
+                </button>
+              </div>
+              <p className="text-center text-xs text-gray-500 mt-2">
+                Playing in {autoPlay.secondsLeft}s
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Info + episode panel */}

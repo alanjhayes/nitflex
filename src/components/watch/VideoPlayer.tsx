@@ -9,6 +9,7 @@ interface VideoPlayerProps {
   mediaType: "movie" | "tv";
   season?: number;
   episode?: number;
+  onEnded?: () => void;
 }
 
 type State =
@@ -34,7 +35,7 @@ async function registerSW(referer: string) {
   }
 }
 
-export function VideoPlayer({ tmdbId, mediaType, season, episode }: VideoPlayerProps) {
+export function VideoPlayer({ tmdbId, mediaType, season, episode, onEnded }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<import("hls.js").default | null>(null);
   const [state, setState] = useState<State>({ status: "idle" });
@@ -155,6 +156,7 @@ export function VideoPlayer({ tmdbId, mediaType, season, episode }: VideoPlayerP
         className={`w-full h-full ${state.status === "ready" ? "block" : "hidden"}`}
         controls
         playsInline
+        onEnded={onEnded}
       />
     </div>
   );
