@@ -51,6 +51,7 @@ interface Provider {
 }
 
 const PROVIDERS: Provider[] = [
+  // Tier 1 — confirmed m3u8 extraction without click
   {
     name: "vidlink",
     buildUrl: (id, type, season, episode) =>
@@ -61,31 +62,42 @@ const PROVIDERS: Provider[] = [
     timeoutMs: 30000,
   },
   {
-    name: "vidsrc",
+    name: "vidrock",
     buildUrl: (id, type, season, episode) =>
       type === "movie"
-        ? `https://vidsrc.to/embed/movie/${id}`
-        : `https://vidsrc.to/embed/tv/${id}/${season ?? 1}/${episode ?? 1}`,
-    referer: "https://vidsrc.to/",
-    timeoutMs: 25000,
+        ? `https://vidrock.net/embed/movie/${id}`
+        : `https://vidrock.net/embed/tv/${id}/${season ?? 1}/${episode ?? 1}`,
+    referer: "https://vidrock.net/",
+    timeoutMs: 30000,
+  },
+  // Tier 2 — confirmed working with play-button click
+  {
+    name: "videasy",
+    buildUrl: (id, type, season, episode) =>
+      type === "movie"
+        ? `https://player.videasy.net/movie/${id}`
+        : `https://player.videasy.net/tv/${id}/${season ?? 1}/${episode ?? 1}`,
+    referer: "https://player.videasy.net/",
+    timeoutMs: 35000,
+  },
+  // Tier 3 — additional fallbacks
+  {
+    name: "vidfast",
+    buildUrl: (id, type, season, episode) =>
+      type === "movie"
+        ? `https://vidfast.pro/movie/${id}`
+        : `https://vidfast.pro/tv/${id}/${season ?? 1}/${episode ?? 1}`,
+    referer: "https://vidfast.pro/",
+    timeoutMs: 35000,
   },
   {
-    name: "embed.su",
+    name: "vidzee",
     buildUrl: (id, type, season, episode) =>
       type === "movie"
-        ? `https://embed.su/embed/movie/${id}`
-        : `https://embed.su/embed/tv/${id}/${season ?? 1}/${episode ?? 1}`,
-    referer: "https://embed.su/",
-    timeoutMs: 25000,
-  },
-  {
-    name: "2embed",
-    buildUrl: (id, type, season, episode) =>
-      type === "movie"
-        ? `https://www.2embed.cc/embed/${id}`
-        : `https://www.2embed.cc/embedtv/${id}&s=${season ?? 1}&e=${episode ?? 1}`,
-    referer: "https://www.2embed.cc/",
-    timeoutMs: 25000,
+        ? `https://player.vidzee.wtf/embed/movie/${id}`
+        : `https://player.vidzee.wtf/embed/tv/${id}/${season ?? 1}/${episode ?? 1}`,
+    referer: "https://player.vidzee.wtf/",
+    timeoutMs: 35000,
   },
 ];
 
@@ -160,6 +172,18 @@ async function extractFromProvider(
     });
 
     page.goto(embedUrl, { timeout: provider.timeoutMs }).catch(() => {});
+
+    // After 5 s, try clicking a play button — some providers require user interaction
+    setTimeout(async () => {
+      if (resolved) return;
+      try {
+        await page.click(
+          'button[class*="play" i], [class*="play-btn" i], [data-play], ' +
+          '.jw-icon-display, .plyr__control--overlaid, video',
+          { timeout: 2000 }
+        );
+      } catch { /* no play button — that's fine */ }
+    }, 5000);
 
     const result = await Promise.race([
       found,
