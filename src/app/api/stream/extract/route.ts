@@ -91,12 +91,14 @@ async function extractFromProvider(
 ): Promise<{ m3u8Url: string; referer: string } | null> {
   const browser = await getBrowser();
   const page = await browser.newPage();
+
+  let resolved = false;
+
   try {
     await page.route("**/*.{png,jpg,jpeg,gif,svg,webp,ico,woff,woff2,ttf,eot,css}", (route) =>
       route.abort()
     );
 
-    let resolved = false;
     const found = new Promise<{ m3u8Url: string; referer: string } | null>((resolve) => {
       // 1. Catch direct .m3u8 network requests (most reliable)
       page.on("request", (req) => {
@@ -115,6 +117,8 @@ async function extractFromProvider(
         if (!ct.includes("json") && !ct.includes("javascript") && !ct.includes("text")) return;
         try {
           const text = await res.text();
+          // Re-check after the async gap — another handler may have resolved first
+          if (resolved) return;
           const match = text.match(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/);
           if (match) {
             resolved = true;
@@ -127,12 +131,17 @@ async function extractFromProvider(
 
     page.goto(embedUrl, { timeout: timeoutMs }).catch(() => {});
 
-    return await Promise.race([
+    const result = await Promise.race([
       found,
       new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
     ]);
-  } finally {
+
+    // Kill the tab immediately once we have what we need
     await page.close().catch(() => {});
+    return result;
+  } catch (err) {
+    await page.close().catch(() => {});
+    throw err;
   }
 }
 
