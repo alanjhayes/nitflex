@@ -67,7 +67,15 @@ interface Provider {
 }
 
 const PROVIDERS: Provider[] = [
-  // Tier 1 — CDN has no Origin restrictions, segments go browser→CDN directly via SW
+  {
+    name: "vidlink",
+    buildUrl: (id, type, season, episode) =>
+      type === "movie"
+        ? `https://vidlink.pro/movie/${id}?primaryColor=E50914&title=false&poster=false`
+        : `https://vidlink.pro/tv/${id}/${season ?? 1}/${episode ?? 1}?primaryColor=E50914&title=false&poster=false`,
+    referer: "https://vidlink.pro/",
+    timeoutMs: 30000,
+  },
   {
     name: "vidrock",
     buildUrl: (id, type, season, episode) =>
@@ -103,17 +111,6 @@ const PROVIDERS: Provider[] = [
         : `https://player.vidzee.wtf/embed/tv/${id}/${season ?? 1}/${episode ?? 1}`,
     referer: "https://player.vidzee.wtf/",
     timeoutMs: 35000,
-  },
-  // Last resort — CDN (storm.vodvidl.site) enforces Origin: videostr.net which
-  // browsers can't spoof, so segments may fail CORS in some environments
-  {
-    name: "vidlink",
-    buildUrl: (id, type, season, episode) =>
-      type === "movie"
-        ? `https://vidlink.pro/movie/${id}?primaryColor=E50914&title=false&poster=false`
-        : `https://vidlink.pro/tv/${id}/${season ?? 1}/${episode ?? 1}?primaryColor=E50914&title=false&poster=false`,
-    referer: "https://vidlink.pro/",
-    timeoutMs: 30000,
   },
 ];
 
