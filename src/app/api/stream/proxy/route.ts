@@ -68,7 +68,18 @@ export async function GET(req: Request) {
         return `/api/stream/proxy?token=${token}&v=${v}`;
       }
 
-      // Segment files → absolute CDN URL, Service Worker handles Referer
+      // Segments from CDNs that enforce Origin checks (e.g. storm.vodvidl.site)
+      // encode their required headers in ?headers=. The SW can't spoof Origin,
+      // so route these through our server which can set any header.
+      try {
+        const segUrl = new URL(absolute);
+        if (segUrl.searchParams.has("headers")) {
+          const v = Buffer.from(absolute).toString("base64url");
+          return `/api/stream/segment?token=${token}&v=${v}`;
+        }
+      } catch { /* not a valid URL — fall through */ }
+
+      // All other segments → absolute CDN URL, Service Worker injects Referer
       return absolute;
     });
 
