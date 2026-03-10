@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
 export default async function LandingPage() {
   redirect("/home");

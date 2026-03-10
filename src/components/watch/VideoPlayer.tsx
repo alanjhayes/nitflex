@@ -16,7 +16,7 @@ type State =
   | { status: "idle" }
   | { status: "loading" }   // ad showing + extraction running in parallel
   | { status: "waiting" }   // ad done, still waiting for extraction to finish
-  | { status: "ready"; proxyUrl: string; referer: string }
+  | { status: "ready"; proxyUrl: string }
   | { status: "error"; message: string };
 
 type ExtractResult =
@@ -27,14 +27,10 @@ async function registerSW(referer: string) {
   if (!("serviceWorker" in navigator)) return;
   try {
     const reg = await navigator.serviceWorker.register("/stream-sw.js", { scope: "/" });
-    const sw = reg.active ?? reg.installing ?? reg.waiting;
-    if (sw) sw.postMessage({ type: "SET_REFERER", referer });
-    if (navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({ type: "SET_REFERER", referer });
-    }
-  } catch (err) {
-    console.warn("SW registration failed:", err);
-  }
+    const msg = { type: "SET_REFERER", referer };
+    (reg.active ?? reg.installing ?? reg.waiting)?.postMessage(msg);
+    navigator.serviceWorker.controller?.postMessage(msg);
+  } catch { /* non-fatal */ }
 }
 
 export function VideoPlayer({ tmdbId, mediaType, season, episode, onEnded }: VideoPlayerProps) {
@@ -42,14 +38,11 @@ export function VideoPlayer({ tmdbId, mediaType, season, episode, onEnded }: Vid
   const hlsRef = useRef<import("hls.js").default | null>(null);
   const [state, setState] = useState<State>({ status: "idle" });
 
-  // Refs to coordinate the two parallel async operations
   const extractResultRef = useRef<ExtractResult | null>(null);
-  const adDoneRef = useRef(false);
 
   function load() {
     setState({ status: "loading" });
     extractResultRef.current = null;
-    adDoneRef.current = false;
 
     const params = new URLSearchParams({
       id: String(tmdbId),
@@ -68,34 +61,28 @@ export function VideoPlayer({ tmdbId, mediaType, season, episode, onEnded }: Vid
         if (!res.ok || data.error) {
           return { ok: false, message: data.error ?? "Stream not found" } as ExtractResult;
         }
-        await registerSW(data.referer);
+        if (data.referer) await registerSW(data.referer);
         return { ok: true, proxyUrl: data.proxyUrl, referer: data.referer } as ExtractResult;
       })
       .catch((err) => ({ ok: false, message: String(err) } as ExtractResult))
       .then((result) => {
         extractResultRef.current = result;
-        // If extraction errors, always surface it immediately
         if (!result.ok) {
           setState({ status: "error", message: result.message });
           return;
         }
-        // Only advance to ready if the ad has already finished
         setState((prev) => {
           if (prev.status === "waiting") {
-            return { status: "ready", proxyUrl: result.proxyUrl, referer: result.referer };
+            return { status: "ready", proxyUrl: (result as { ok: true; proxyUrl: string }).proxyUrl };
           }
-          // Still in "loading" — ad is still showing; ad completion will advance the state
           return prev;
         });
       });
   }
 
-  // Called when the ad finishes
   const onAdComplete = useCallback(() => {
-    adDoneRef.current = true;
     const result = extractResultRef.current;
     if (!result) {
-      // Extraction still running — show spinner until it finishes
       setState({ status: "waiting" });
       return;
     }
@@ -103,7 +90,7 @@ export function VideoPlayer({ tmdbId, mediaType, season, episode, onEnded }: Vid
       setState({ status: "error", message: result.message });
       return;
     }
-    setState({ status: "ready", proxyUrl: result.proxyUrl, referer: result.referer });
+    setState({ status: "ready", proxyUrl: (result as { ok: true; proxyUrl: string }).proxyUrl });
   }, []);
 
   useEffect(() => {
@@ -141,7 +128,6 @@ export function VideoPlayer({ tmdbId, mediaType, season, episode, onEnded }: Vid
 
   return (
     <div className="relative w-full h-full bg-black flex items-center justify-center">
-      {/* Ad runs while extraction is in progress */}
       {state.status === "loading" && (
         <AdOverlay
           onComplete={onAdComplete}
@@ -151,7 +137,6 @@ export function VideoPlayer({ tmdbId, mediaType, season, episode, onEnded }: Vid
         />
       )}
 
-      {/* Ad finished before extraction — show spinner */}
       {state.status === "waiting" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white">
           <Loader2 className="w-10 h-10 animate-spin text-[#e50914]" />
