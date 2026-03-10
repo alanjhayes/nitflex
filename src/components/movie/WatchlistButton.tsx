@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Check } from "lucide-react";
-import { useWatchlist } from "@/hooks/useWatchlist";
+import { useWatchlist } from "@/components/movie/WatchlistContext";
 
 interface WatchlistButtonProps {
   tmdbId: number;
