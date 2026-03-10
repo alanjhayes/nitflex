@@ -40,7 +40,7 @@ export function MovieRow({ title, items, mediaType, priorityCount = 0 }: MovieRo
         <div className="overflow-hidden px-4 md:px-8" ref={emblaRef}>
           <div className="flex gap-2">
             {items.map((item, i) => (
-              <div key={item.id} className="flex-[0_0_calc(50%-4px)] sm:flex-[0_0_calc(33%-5px)] md:flex-[0_0_calc(20%-6px)] lg:flex-[0_0_calc(16.66%-7px)]">
+              <div key={`${title}-${item.id}`} className="flex-[0_0_calc(50%-4px)] sm:flex-[0_0_calc(33%-5px)] md:flex-[0_0_calc(20%-6px)] lg:flex-[0_0_calc(16.66%-7px)]">
                 <MovieCard item={item} mediaType={mediaType} priority={i < priorityCount} />
               </div>
             ))}
