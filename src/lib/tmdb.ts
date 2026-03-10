@@ -13,7 +13,7 @@ export const tmdbImage = (path: string | null, size = "w500") => {
   return `https://image.tmdb.org/t/p/${size}${path}`;
 };
 
-async function tmdbFetch<T>(endpoint: string, revalidate = 3600): Promise<T> {
+async function tmdbFetch<T>(endpoint: string, revalidate = 86400): Promise<T> {
   const res = await fetch(`${BASE}${endpoint}`, {
     headers: HEADERS,
     next: { revalidate },
@@ -36,9 +36,27 @@ export async function getTopRated(mediaType: "movie" | "tv"): Promise<TMDBResult
   return data.results;
 }
 
-export async function getByGenre(genreId: number, mediaType: "movie" | "tv"): Promise<TMDBResult[]> {
+export async function getPopular(mediaType: "movie" | "tv"): Promise<TMDBResult[]> {
   const data = await tmdbFetch<{ results: TMDBResult[] }>(
-    `/discover/${mediaType}?language=en-US&with_genres=${genreId}&sort_by=popularity.desc&page=1`
+    `/${mediaType}/popular?language=en-US&page=1`
+  );
+  return data.results;
+}
+
+export async function getNowPlaying(): Promise<TMDBResult[]> {
+  const data = await tmdbFetch<{ results: TMDBResult[] }>(
+    `/movie/now_playing?language=en-US&page=1`
+  );
+  return data.results;
+}
+
+export async function getByGenre(
+  genreId: number,
+  mediaType: "movie" | "tv",
+  extraParams = ""
+): Promise<TMDBResult[]> {
+  const data = await tmdbFetch<{ results: TMDBResult[] }>(
+    `/discover/${mediaType}?language=en-US&with_genres=${genreId}&sort_by=popularity.desc&page=1${extraParams}`
   );
   return data.results;
 }
