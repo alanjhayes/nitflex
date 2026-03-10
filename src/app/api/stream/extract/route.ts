@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { signStreamToken } from "@/lib/streamToken";
-import type { Browser } from "playwright";
+import type { Browser, BrowserContext } from "playwright";
 
 // In-memory cache — cleared on server restart (i.e. new session)
 const memoryCache = new Map<string, { m3u8Url: string; referer: string }>();
@@ -9,6 +9,22 @@ const memoryCache = new Map<string, { m3u8Url: string; referer: string }>();
 // Persistent browser singleton — eliminates ~3-5s Chromium startup per request
 let browserInstance: Browser | null = null;
 let browserPromise: Promise<Browser> | null = null;
+
+// ---------------------------------------------------------------------------
+// Context watchdog — kills any context open longer than 5 minutes
+// ---------------------------------------------------------------------------
+const openContexts = new Map<BrowserContext, number>(); // context → openedAt ms
+
+setInterval(() => {
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  for (const [ctx, openedAt] of openContexts) {
+    if (openedAt < cutoff) {
+      console.warn("[stream] watchdog: closing context open >5 min");
+      openContexts.delete(ctx);
+      ctx.close().catch(() => {});
+    }
+  }
+}, 60_000);
 
 async function getBrowser(): Promise<Browser> {
   if (browserInstance?.isConnected()) return browserInstance;
@@ -119,6 +135,7 @@ async function extractFromProvider(
     viewport: { width: 1280, height: 720 },
     extraHTTPHeaders: { Referer: provider.referer },
   });
+  openContexts.set(context, Date.now());
 
   // Mask navigator.webdriver so providers don't detect headless Chromium
   await context.addInitScript(() => {
@@ -192,7 +209,7 @@ async function extractFromProvider(
 
     return result;
   } finally {
-    // context.close() closes the page and all associated resources
+    openContexts.delete(context);
     await context.close().catch(() => {});
   }
 }
